@@ -1,12 +1,14 @@
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
 from ta.momentum import RSIIndicator
 import os
-from datetime import datetime, time
+import datetime
 import pytz
 import sys
+import time
 
 # Telegram ayarları
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -15,14 +17,15 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 SYMBOLS = ['VZ', 'OKE', 'FLNG', 'MO', 'ENB', 'PFE', 'STWD', 'NLY']
 EXCHANGE_SUFFIX = ''  # NYSE için gerek yok, NASDAQ için .NS gibi ekler olurdu
 
+
 # Türkiye saat dilimi
 istanbul = pytz.timezone('Europe/Istanbul')
-now = datetime.now(istanbul)
+now = datetime.datetime.now(istanbul)
 current_time = now.time()
 
 # NYSE açık saatleri (yaz saati için)
-open_time = time(16, 30)
-close_time = time(23, 0)
+open_time = datetime.time(16, 30)
+close_time = datetime.time(23, 0)
 
 # SMC pattern tespiti için yardımcı fonksiyonlar
 def detect_smc(df):
@@ -31,7 +34,7 @@ def detect_smc(df):
     df['HH'] = (df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))
     df['LL'] = (df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))
     # Trend tespiti (basit)
-    df['trend'] = np.where(df['High'] > df['High'].shift(1), 'up', 'down')
+    df['trend'] = np.where(df['High'] > df['High'].shift(1), 'up', 'down').ravel().astype(object)
     return df
 
 def detect_bos(df):
@@ -39,7 +42,15 @@ def detect_bos(df):
     last_ll = df[df['LL']].index[-1] if df['LL'].any() else None
     if last_ll is not None:
         after_ll = df.loc[last_ll:]
-        if (after_ll['High'] > df['High'].loc[last_ll]).any():
+        ref_high = df['High'].loc[last_ll]
+        if hasattr(ref_high, 'item'):
+            ref_high = ref_high.item()
+        result = (after_ll['High'] > ref_high)
+        if hasattr(result, 'any'):
+            result = result.any()
+        if hasattr(result, 'item'):
+            result = result.item()
+        if not after_ll['High'].empty and result:
             return True
     return False
 
@@ -56,11 +67,17 @@ def analyze_symbol(symbol, interval):
     if df.empty or len(df) < 30:
         return None
     df = detect_smc(df)
-    rsi = RSIIndicator(df['Close'], window=14)
+    rsi = RSIIndicator(df['Close'].squeeze(), window=14)
     df['RSI'] = rsi.rsi()
     msg = ''
     # HL ve uptrend ise
-    if df['trend'].iloc[-1] == 'up' and df['Low'].iloc[-1] > df['Low'].iloc[-2]:
+    low_last = df['Low'].iloc[-1]
+    low_prev = df['Low'].iloc[-2]
+    if hasattr(low_last, 'item'):
+        low_last = low_last.item()
+    if hasattr(low_prev, 'item'):
+        low_prev = low_prev.item()
+    if df['trend'].iloc[-1] == 'up' and low_last > low_prev:
         msg += f'{symbol} ({interval}): HL oluştu, uptrend devam. Alım fırsatı olabilir.\n'
     # BOS yukarı
     if detect_bos(df):
@@ -78,7 +95,7 @@ def choose_best_interval(symbol):
         if df.empty or len(df) < 30:
             continue
         df = detect_smc(df)
-        rsi = RSIIndicator(df['Close'], window=14)
+        rsi = RSIIndicator(df['Close'].squeeze(), window=14)
         df['RSI'] = rsi.rsi()
         count = 0
         if (df['trend'] == 'up').sum() > 5:
