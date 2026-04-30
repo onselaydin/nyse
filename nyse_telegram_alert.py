@@ -3,15 +3,26 @@ import pandas as pd
 import numpy as np
 import requests
 from ta.momentum import RSIIndicator
-import time
 import os
+from datetime import datetime, time
+import pytz
+import sys
 
 # Telegram ayarları
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '5234788845:AAGRh1LfTx5KxBBCgI5wXk3Nd7hSLEOVE-E')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '-1001644944675')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 SYMBOLS = ['VZ', 'OKE', 'FLNG', 'MO', 'ENB', 'PFE', 'STWD', 'NLY']
 EXCHANGE_SUFFIX = ''  # NYSE için gerek yok, NASDAQ için .NS gibi ekler olurdu
+
+# Türkiye saat dilimi
+istanbul = pytz.timezone('Europe/Istanbul')
+now = datetime.now(istanbul)
+current_time = now.time()
+
+# NYSE açık saatleri (yaz saati için)
+open_time = time(16, 30)
+close_time = time(23, 0)
 
 # SMC pattern tespiti için yardımcı fonksiyonlar
 def detect_smc(df):
@@ -78,6 +89,9 @@ def choose_best_interval(symbol):
     return max(signals, key=signals.get) if signals else '1d'
 
 def main():
+    if not (open_time <= current_time <= close_time):
+        print("Borsa kapalı, çıkılıyor.")
+        sys.exit()
     for symbol in SYMBOLS:
         interval = choose_best_interval(symbol)
         msg = analyze_symbol(symbol, interval)
