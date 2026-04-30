@@ -1,0 +1,28 @@
+# Results & trade logs (veri dosyaları - repoya gönderilmez)
+results/
+pics/
+dataset/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.env
+
+# Ortam dosyaları
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+Dockerfile
