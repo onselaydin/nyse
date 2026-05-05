@@ -1,0 +1,33 @@
+{
+  "project_name": "LiquiditySweep_BOS_FVG_System",
+  "symbol": "EURUSD",
+  "broker_name": "XM Global MT5",
+  "timeframes": ["M5", "M15", "H1", "H4"],
+  "historical_months": 6,
+  "m5_months_if_heavy": 1,
+  "account": {
+    "initial_balance": 10000.0,
+    "leverage": 100,
+    "fixed_lot": 0.05
+  },
+  "execution": {
+    "default_spread_points": 8,
+    "slippage_points": 2,
+    "allow_multiple_positions": true,
+    "max_open_positions": 3
+  },
+  "broker_costs": {
+    "commission_per_lot_usd": 7.0,
+    "swap_long_pips_per_night": -0.5,
+    "swap_short_pips_per_night": 0.3,
+    "apply_commission": true,
+    "apply_swap": true
+  },
+  "paths": {
+    "data_dir": "data",
+    "reports_dir": "reports",
+    "charts_dir": "charts",
+    "logs_dir": "logs",
+    "results_dir": "results"
+  }
+}

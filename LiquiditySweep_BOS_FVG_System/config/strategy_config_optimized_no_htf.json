@@ -1,0 +1,54 @@
+{
+  "direction": {
+    "enable_bullish": true,
+    "enable_bearish": true
+  },
+  "pivot_sensitivity": 2,
+  "min_sweep_distance_points": 5,
+  "min_fvg_size_points": 12,
+  "displacement": {
+    "enabled": true,
+    "lookback_candles": 5,
+    "body_multiplier": 1.2
+  },
+  "entry_confirmation": {
+    "mode": "rejection_or_body",
+    "min_rejection_wick_ratio": 1.2,
+    "min_body_points": 10
+  },
+  "session_filter": {
+    "enabled": true,
+    "london": {
+      "start_hour_utc": 7,
+      "end_hour_utc": 11
+    },
+    "new_york": {
+      "start_hour_utc": 12,
+      "end_hour_utc": 16
+    }
+  },
+  "htf_filter": {
+    "enabled": false,
+    "h1_structure_bullish_or_ema50": true,
+    "ema_period": 50
+  },
+  "risk": {
+    "rr_target": 2.5,
+    "sl_mode": "below_sweep_low",
+    "tp_mode": "rr"
+  },
+  "trade_management": {
+    "enable_break_even": true,
+    "break_even_rr": 1.0,
+    "enable_partial_tp": true,
+    "partial_tp_rr": 1.5,
+    "partial_close_ratio": 0.5,
+    "rr_target_overrides": {
+      "M15": 2.0
+    }
+  },
+  "feature_toggles": {
+    "save_debug_signals": true,
+    "save_charts": true
+  }
+}
