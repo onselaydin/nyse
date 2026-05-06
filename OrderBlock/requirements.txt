@@ -1,0 +1,13 @@
+MetaTrader5>=5.0.45
+pandas>=2.2.2
+numpy>=1.26.4
+matplotlib>=3.9.0
+plotly>=5.22.0
+scikit-learn>=1.5.0
+torch>=2.3.0
+torchvision>=0.18.0
+optuna>=3.6.1
+numba>=0.59.1
+tqdm>=4.66.4
+python-dateutil>=2.9.0.post0
+pydantic>=2.7.4

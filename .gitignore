@@ -26,3 +26,11 @@ desktop.ini
 # Logs
 *.log
 Dockerfile
+LiquiditySweep_BOS_FVG_System/results/
+LiquiditySweep_BOS_FVG_System/logs/
+LiquiditySweep_BOS_FVG_System/chatrs/
+LiquiditySweep_BOS_FVG_System/reports/
+OrderBlock/backtests/
+OrderBlock/logs/
+OrderBlock/charts/
+OrderBlock/data/

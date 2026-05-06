@@ -33,13 +33,21 @@ import pandas as pd
 
 from core.mt5_connector import MT5Connector, TIMEFRAME_MAP
 from strategies.liquidity_sweep_bos_fvg import LiquiditySweepBOSFVGStrategy
+from strategies.orderblock_m15_adapter import OrderBlockM15Adapter
 
 # Her timeframe için benzersiz magic number → MT5'te işlemleri ayırt eder.
 MAGIC_NUMBERS: dict[str, int] = {
     "M5":  10005,
-    "M15": 10015,
+    "M15": 990015,
     "H1":  10060,
     "H4":  10240,
+}
+
+ORDER_COMMENTS: dict[str, str] = {
+    "M15": "OrderBlock-M15",
+    "M5": "SMC-M5",
+    "H1": "SMC-H1",
+    "H4": "SMC-H4",
 }
 
 # Timeframe başına polling aralıkları (saniye).
@@ -90,9 +98,8 @@ class PaperTrader:
 
         self.mt5_conn = MT5Connector(logger)
 
-        # Her TF için bağımsız strateji örneği.
-        self.strategies: dict[str, LiquiditySweepBOSFVGStrategy] = {
-            tf: LiquiditySweepBOSFVGStrategy(strategy_cfg, logger)
+        self.strategy_kinds: dict[str, str] = {
+            tf: ("orderblock" if tf == "M15" else "liquidity")
             for tf in active_timeframes
         }
 
@@ -197,26 +204,60 @@ class PaperTrader:
         Strateji state machine doğru çalışması için her polling döngüsünde
         tüm barlar baştan taranır; yalnızca son barın ürettiği sinyal kullanılır.
         """
+        strategy_kind = self.strategy_kinds.get(tf, "liquidity")
+        magic = MAGIC_NUMBERS.get(tf, 0)
+        comment = ORDER_COMMENTS.get(tf, f"SMC-{tf}")
+        
+        self.logger.debug(
+            "TF Kontrol | TF=%s | Strateji=%s | Magic=%d | Comment=%s | Lot=%.2f",
+            tf, strategy_kind, magic, comment, self.lot,
+        )
+        
         df = self._fetch_bars(tf)
         if df is None or len(df) < 50:
             self.logger.warning("%s için yeterli veri yok, atlanıyor.", tf)
             return
 
-        # H1 HTF bağlamı (strateji filtresi).
+        # H1/H4 bağlamı (M15 OrderBlock filtresi ve H1 liquidity filtresi).
         h1_ctx = self._build_h1_context()
+        h4_ctx = self._build_h4_context()
+        
+        self.logger.debug(
+            "MTF Bağlamı | TF=%s | H1_Bullish=%s | H1_Bearish=%s | H4_Bullish=%s | H4_Bearish=%s",
+            tf,
+            h1_ctx.get("structure_bullish", False),
+            h1_ctx.get("structure_bearish", False),
+            h4_ctx.get("trend_bullish", False),
+            h4_ctx.get("trend_bearish", False),
+        )
 
         # Her polling döngüsünde sıfırdan tara (look-ahead yok, state temiz).
         # Strateji iç logları (FVG/Sweep/BOS detayları) susturulur; sadece sinyal loglanır.
         silent_logger = logging.getLogger("paper_trader.silent")
         silent_logger.setLevel(logging.CRITICAL)
-        strategy = LiquiditySweepBOSFVGStrategy(self.strategy_cfg, silent_logger)
+        
+        if strategy_kind == "orderblock":
+            self.logger.debug("Strateji Başlat | TF=%s | OrderBlock M15 Adaptörü", tf)
+            strategy = OrderBlockM15Adapter(silent_logger)
+        else:
+            self.logger.debug("Strateji Başlat | TF=%s | Liquidity Sweep BOS FVG", tf)
+            strategy = LiquiditySweepBOSFVGStrategy(self.strategy_cfg, silent_logger)
+
         signal = None
         for i in range(len(df)):
-            result = strategy.process_bar(df, i, h1_ctx)
+            if strategy_kind == "orderblock":
+                result = strategy.process_bar(df, i, {"h1": h1_ctx, "h4": h4_ctx})
+            else:
+                result = strategy.process_bar(df, i, h1_ctx)
             if result and i == len(df) - 1:
                 signal = result  # Sadece son barın sinyali geçerli.
+                self.logger.debug(
+                    "Sinyal Üretildi | TF=%s | Strateji=%s | Yön=%s | Kaynak=BarIndex:%d",
+                    tf, strategy_kind, result.get("side", "?"), i,
+                )
 
         if not signal:
+            self.logger.debug("Sinyal Yok | TF=%s | Strateji=%s", tf, strategy_kind)
             return
 
         signal = self._apply_rr_override(tf, signal)
@@ -224,28 +265,42 @@ class PaperTrader:
         # Aynı bar için tekrar sinyal atlanır.
         sig_time: datetime = signal["time"]
         if self._last_signal_time.get(tf) == sig_time:
+            self.logger.debug("Tekrarlanan Sinyal | TF=%s | BarTime=%s | ATLANIDI", tf, sig_time)
             return
         self._last_signal_time[tf] = sig_time
 
         self._total_signals += 1
         self.logger.info(
-            "─" * 60,
+            "═" * 70,
         )
         self.logger.info(
-            "SİNYAL #%d | %s %s | Yön: %s | Giriş: %.5f | SL: %.5f | TP: %.5f | Sebep: %s",
+            "SİNYAL #%d | %s %s | Strateji: %s | Magic: %d",
             self._total_signals,
             self.symbol, tf,
+            strategy_kind.upper(),
+            magic,
+        )
+        self.logger.info(
+            "  Yön: %s | Giriş: %.5f | SL: %.5f | TP: %.5f",
             signal.get("side", "?").upper(),
             signal["entry_price"],
             signal["stop_loss"],
             signal["take_profit"],
-            signal.get("reason", ""),
         )
-        self.logger.info("─" * 60)
+        self.logger.info(
+            "  Sebep: %s | Lot: %.2f | Comment: %s",
+            signal.get("reason", "N/A"),
+            self.lot,
+            comment,
+        )
+        self.logger.info("═" * 70)
 
         # Zaten bu TF için açık işlem var mı?
         if self._has_open_position(tf):
-            self.logger.info("%s için zaten açık işlem var, yeni sinyal atlandı.", tf)
+            self.logger.warning(
+                "Açık Pozisyon Var | TF=%s | Magic=%d | Sinyal ATLANIDI",
+                tf, magic,
+            )
             return
 
         self._send_order(tf, signal)
@@ -287,6 +342,30 @@ class PaperTrader:
         return {
             "structure_bullish": last_close > prev_close > prev2_close,
             "structure_bearish": last_close < prev_close < prev2_close,
+            "price_above_ema50": last_close > ema50,
+            "price_below_ema50": last_close < ema50,
+        }
+
+    def _build_h4_context(self) -> dict[str, bool]:
+        """H4 yön filtresi için trend bağlamı hesaplar."""
+        rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_H4, 0, 100)
+        if rates is None or len(rates) < 52:
+            return {
+                "trend_bullish": False,
+                "trend_bearish": False,
+                "price_above_ema50": False,
+                "price_below_ema50": False,
+            }
+
+        closes = [r["close"] for r in rates]
+        ema50 = self._ema(closes, 50)
+        last_close = closes[-1]
+        prev_close = closes[-2]
+        prev2_close = closes[-3]
+
+        return {
+            "trend_bullish": (last_close > prev_close > prev2_close) and (last_close > ema50),
+            "trend_bearish": (last_close < prev_close < prev2_close) and (last_close < ema50),
             "price_above_ema50": last_close > ema50,
             "price_below_ema50": last_close < ema50,
         }
@@ -340,21 +419,28 @@ class PaperTrader:
             "tp":        tp,
             "deviation": self.slippage,
             "magic":     magic,
-            "comment":   f"SMC-{tf}-{side[:1].upper()}",
+            "comment":   ORDER_COMMENTS.get(tf, f"SMC-{tf}-{side[:1].upper()}"),
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         if self.dry_run:
             self.logger.info(
-                "[KuruÇalıştırma] Emir GÖNDERİLMEDİ | %s %s | %s | Giriş=%.5f SL=%.5f TP=%.5f Lot=%.2f",
-                self.symbol, tf, side.upper(), entry, sl, tp, self.lot,
+                "[KuruÇalıştırma] Emir GÖNDERİLMEDİ | %s %s | Magic=%d | Comment=%s | %s",
+                self.symbol, tf, magic, request[\"comment\"], side.upper(),
+            )
+            self.logger.info(
+                "  Giriş=%.5f | SL=%.5f | TP=%.5f | Lot=%.2f",
+                entry, sl, tp, self.lot,
             )
             return
 
         result = mt5.order_send(request)
         if result is None:
-            self.logger.error("order_send None döndü. Son hata: %s", mt5.last_error())
+            self.logger.error(
+                "order_send None | TF=%s | Magic=%d | Comment=%s | Hata=%s",
+                tf, magic, request["comment"], mt5.last_error(),
+            )
             self._append_audit_event(
                 event_type="ORDER_SEND_FAIL",
                 tf=tf,
@@ -372,6 +458,10 @@ class PaperTrader:
                 "Emir BAŞARILI | %s %s | Ticket=%d | Fiyat=%.5f",
                 self.symbol, tf, result.order, result.price,
             )
+            self.logger.info(
+                "  Magic=%d | Comment=%s | Lot=%.2f | Side=%s",
+                magic, request["comment"], self.lot, side.upper(),
+            )
             self._append_audit_event(
                 event_type="ORDER_SEND_OK",
                 tf=tf,
@@ -384,8 +474,8 @@ class PaperTrader:
             )
         else:
             self.logger.warning(
-                "Emir BAŞARISIZ | Kod=%d | Açıklama=%s",
-                result.retcode, result.comment,
+                "Emir BAŞARISIZ | TF=%s | Magic=%d | Kod=%d | %s",
+                tf, magic, result.retcode, result.comment,
             )
             self._append_audit_event(
                 event_type="ORDER_SEND_FAIL",

@@ -10,9 +10,9 @@ Kullanım:
 Önemli:
     - Varsayılan olarak DRY_RUN=True → emir GÖNDERİLMEZ, sadece loglanır.
     - Gerçek emir için --live bayrağını ekleyin.
-    - Çoklu TF kullanırsanız (örn. M15 + H1), her TF kendi magic numarasıyla
-      MT5'te BAĞIMSIZ işlem açar. Aynı anda 2 pozisyon açık olabilir.
-    - Önerilen kullanım: tek TF + H1 HTF filtresi etkin.
+    - Hibrit modda M15 otomatik olarak OrderBlock stratejisine yönlenir.
+    - H1 ve H4, Liquidity Sweep BOS FVG stratejisiyle çalışır.
+    - Her TF kendi magic numarasıyla MT5'te BAĞIMSIZ işlem açar.
 """
 
 import argparse

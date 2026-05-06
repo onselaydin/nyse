@@ -1,0 +1,2 @@
+LiquiditySweep_BOS_FVG_System> python .\run_paper_trader.py --timeframes H1 H4 --live
+python OrderBlock/main.py --mode live --poll-seconds 5
