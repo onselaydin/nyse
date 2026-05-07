@@ -33,18 +33,17 @@ import pandas as pd
 
 from core.mt5_connector import MT5Connector, TIMEFRAME_MAP
 from strategies.liquidity_sweep_bos_fvg import LiquiditySweepBOSFVGStrategy
-from strategies.orderblock_m15_adapter import OrderBlockM15Adapter
 
 # Her timeframe için benzersiz magic number → MT5'te işlemleri ayırt eder.
 MAGIC_NUMBERS: dict[str, int] = {
     "M5":  10005,
-    "M15": 990015,
+    "M15": 10015,
     "H1":  10060,
     "H4":  10240,
 }
 
 ORDER_COMMENTS: dict[str, str] = {
-    "M15": "OrderBlock-M15",
+    "M15": "SMC-M15",
     "M5": "SMC-M5",
     "H1": "SMC-H1",
     "H4": "SMC-H4",
@@ -98,10 +97,7 @@ class PaperTrader:
 
         self.mt5_conn = MT5Connector(logger)
 
-        self.strategy_kinds: dict[str, str] = {
-            tf: ("orderblock" if tf == "M15" else "liquidity")
-            for tf in active_timeframes
-        }
+        self.strategy_kinds: dict[str, str] = {tf: "liquidity" for tf in active_timeframes}
 
         # Son gönderilen sinyal saati → aynı bara tekrar sinyal göndermeyi önler.
         self._last_signal_time: dict[str, datetime] = {}
@@ -218,7 +214,7 @@ class PaperTrader:
             self.logger.warning("%s için yeterli veri yok, atlanıyor.", tf)
             return
 
-        # H1/H4 bağlamı (M15 OrderBlock filtresi ve H1 liquidity filtresi).
+        # H1/H4 bağlamı (log/filtre amaçlı).
         h1_ctx = self._build_h1_context()
         h4_ctx = self._build_h4_context()
         
@@ -236,19 +232,12 @@ class PaperTrader:
         silent_logger = logging.getLogger("paper_trader.silent")
         silent_logger.setLevel(logging.CRITICAL)
         
-        if strategy_kind == "orderblock":
-            self.logger.debug("Strateji Başlat | TF=%s | OrderBlock M15 Adaptörü", tf)
-            strategy = OrderBlockM15Adapter(silent_logger)
-        else:
-            self.logger.debug("Strateji Başlat | TF=%s | Liquidity Sweep BOS FVG", tf)
-            strategy = LiquiditySweepBOSFVGStrategy(self.strategy_cfg, silent_logger)
+        self.logger.debug("Strateji Başlat | TF=%s | Liquidity Sweep BOS FVG", tf)
+        strategy = LiquiditySweepBOSFVGStrategy(self.strategy_cfg, silent_logger)
 
         signal = None
         for i in range(len(df)):
-            if strategy_kind == "orderblock":
-                result = strategy.process_bar(df, i, {"h1": h1_ctx, "h4": h4_ctx})
-            else:
-                result = strategy.process_bar(df, i, h1_ctx)
+            result = strategy.process_bar(df, i, h1_ctx)
             if result and i == len(df) - 1:
                 signal = result  # Sadece son barın sinyali geçerli.
                 self.logger.debug(
@@ -427,7 +416,7 @@ class PaperTrader:
         if self.dry_run:
             self.logger.info(
                 "[KuruÇalıştırma] Emir GÖNDERİLMEDİ | %s %s | Magic=%d | Comment=%s | %s",
-                self.symbol, tf, magic, request[\"comment\"], side.upper(),
+                self.symbol, tf, magic, request["comment"], side.upper(),
             )
             self.logger.info(
                 "  Giriş=%.5f | SL=%.5f | TP=%.5f | Lot=%.2f",
@@ -610,6 +599,13 @@ class PaperTrader:
             swap = close_info["swap"]
             commission = close_info["commission"]
 
+            if reason_label == "UNKNOWN_CLOSE":
+                self.logger.warning(
+                    "KAPANIŞ NEDENİ BELİRSİZ | Ticket=%d | TF=%s | SonDeal bulunamadı",
+                    ticket,
+                    meta["tf"],
+                )
+
             self.logger.info(
                 "POZ KAPANDI | Ticket=%d | %s %s | Sebep=%s | PnL=%.2f$ | Kapanış=%.5f",
                 ticket,
@@ -637,13 +633,30 @@ class PaperTrader:
     def _get_closed_position_info(self, ticket: int) -> dict[str, float | str]:
         """Kapalı pozisyonun history deal kayıtlarını okuyup kapanış bilgisini döndürür."""
         date_to = datetime.now(timezone.utc)
-        date_from = date_to - pd.Timedelta(days=10)
-        deals = mt5.history_deals_get(date_from, date_to) or []
+        date_from = date_to - pd.Timedelta(days=30)
 
-        pos_deals = [d for d in deals if int(getattr(d, "position_id", 0)) == ticket]
-        out_deals = [d for d in pos_deals if int(getattr(d, "entry", -1)) == int(mt5.DEAL_ENTRY_OUT)]
+        # Önce doğrudan position bazlı sorgu dene (en güvenilir yol).
+        pos_deals = []
+        try:
+            direct_deals = mt5.history_deals_get(position=ticket)
+            if direct_deals:
+                pos_deals = list(direct_deals)
+        except TypeError:
+            pos_deals = []
 
-        if not out_deals:
+        # Fallback: tarih aralığında manuel filtreleme.
+        if not pos_deals:
+            deals = mt5.history_deals_get(date_from, date_to) or []
+            pos_deals = [
+                d
+                for d in deals
+                if int(getattr(d, "position_id", 0)) == ticket or int(getattr(d, "order", 0)) == ticket
+            ]
+
+        deal_entry_out = int(getattr(mt5, "DEAL_ENTRY_OUT", 1))
+        out_deals = [d for d in pos_deals if int(getattr(d, "entry", -1)) == deal_entry_out]
+
+        if not pos_deals:
             return {
                 "reason_label": "UNKNOWN_CLOSE",
                 "pnl": 0.0,
@@ -652,13 +665,17 @@ class PaperTrader:
                 "commission": 0.0,
             }
 
+        # Bazı broker/hesap türlerinde OUT flag beklenen gibi gelmeyebilir.
+        if not out_deals:
+            out_deals = pos_deals
+
         # Son çıkış deal'i kapanış kaydı olarak kabul edilir.
-        deal = sorted(out_deals, key=lambda d: int(getattr(d, "time", 0)))[-1]
+        deal = sorted(out_deals, key=lambda d: int(getattr(d, "time_msc", getattr(d, "time", 0))))[-1]
         reason = int(getattr(deal, "reason", -1))
         reason_label = self._deal_reason_label(reason)
 
         return {
-            "reason_label": reason_label,
+            "reason_label": f"{reason_label}",
             "pnl": float(getattr(deal, "profit", 0.0)),
             "close_price": float(getattr(deal, "price", 0.0)),
             "swap": float(getattr(deal, "swap", 0.0)),

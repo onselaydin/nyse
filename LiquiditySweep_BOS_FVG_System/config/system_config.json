@@ -8,7 +8,7 @@
   "account": {
     "initial_balance": 10000.0,
     "leverage": 100,
-    "fixed_lot": 1.0
+    "fixed_lot": 0.50
   },
   "execution": {
     "default_spread_points": 8,

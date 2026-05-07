@@ -10,8 +10,7 @@ Kullanım:
 Önemli:
     - Varsayılan olarak DRY_RUN=True → emir GÖNDERİLMEZ, sadece loglanır.
     - Gerçek emir için --live bayrağını ekleyin.
-    - Hibrit modda M15 otomatik olarak OrderBlock stratejisine yönlenir.
-    - H1 ve H4, Liquidity Sweep BOS FVG stratejisiyle çalışır.
+    - M15, H1 ve H4 Liquidity Sweep BOS FVG stratejisiyle çalışır.
     - Her TF kendi magic numarasıyla MT5'te BAĞIMSIZ işlem açar.
 """
 
@@ -30,7 +29,7 @@ from core.paper_trader import PaperTrader
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("PaperTrader")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     handler.setFormatter(
         logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
